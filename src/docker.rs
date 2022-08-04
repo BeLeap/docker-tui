@@ -27,10 +27,7 @@ pub fn get_catalog() -> Catalog {
     .unwrap();
     debug!("Raw Response: {}", body_raw);
 
-    let result = serde_json::from_str(&body_raw).unwrap();
-    debug!("Response: {:?}", result);
-
-    result
+    serde_json::from_str(&body_raw).unwrap()
 }
 
 pub fn get_image(image: String) -> Image {
@@ -47,8 +44,5 @@ pub fn get_image(image: String) -> Image {
     .unwrap();
     debug!("Raw Response: {}", body_raw);
 
-    let result = serde_json::from_str(&body_raw).unwrap();
-    debug!("Response: {:?}", result);
-
-    result
+    serde_json::from_str(&body_raw).unwrap()
 }
