@@ -1,7 +1,7 @@
 mod app;
 mod docker;
 
-use std::io;
+use std::{io, env, str::FromStr};
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -13,15 +13,18 @@ use log4rs::{append::file::FileAppender, encode::pattern::PatternEncoder, Config
 use tui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> Result<(), io::Error> {
+    let log_level = env::var("LOG_LEVEL").unwrap_or("INFO".to_string());
+    let level_filter = LevelFilter::from_str(log_level.as_str()).unwrap();
     let file = FileAppender::builder()
         .encoder(Box::new(PatternEncoder::new("{d} - {m}{n}")))
-        .build("log/requests.log")
+        .build("log/docker-tui.log")
         .unwrap();
     let config = Config::builder()
         .appender(Appender::builder().build("file", Box::new(file)))
         .build(Root::builder()
             .appender("file")
-            .build(LevelFilter::Debug))
+            .build(level_filter)
+        )
         .unwrap();
     let _handle = log4rs::init_config(config).unwrap();
 
