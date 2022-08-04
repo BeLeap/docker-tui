@@ -1,6 +1,11 @@
-use std::{fmt::Display, io};
+use std::{
+    cmp::{max, min},
+    fmt::Display,
+    io,
+};
 
 use crossterm::event::{self, Event, KeyCode};
+use regex::Regex;
 use tui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -16,7 +21,7 @@ use crate::docker;
 enum Location {
     Unknown,
     Catalog,
-    Image,
+    Image(String),
 }
 impl Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -24,9 +29,9 @@ impl Display for Location {
             f,
             "{}",
             match self {
-                Location::Unknown => "Unknown",
-                Location::Catalog => "Catalog",
-                Location::Image => "Image",
+                Location::Unknown => "Unknown".to_string(),
+                Location::Catalog => "Catalog".to_string(),
+                Location::Image(name) => name.to_string(),
             }
         )
     }
@@ -55,7 +60,7 @@ enum Mode {
 }
 
 pub struct App<'a> {
-    focus_index: usize,
+    focus_index: i32,
     message_title: MessageTitle,
     message: Vec<Span<'a>>,
     data: Vec<String>,
@@ -78,10 +83,21 @@ impl<'a> Default for App<'a> {
     }
 }
 
+pub fn get_random_elem<T: Clone>(vec: &Vec<T>) -> T {
+    vec[(rand::random::<f32>() * vec.len() as f32).floor() as usize].clone()
+}
+
 pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+    let help_messages = vec![vec![
+        Span::raw("Press "),
+        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(" to exit."),
+    ]];
+
     let catalog = docker::get_catalog();
     app.data = catalog.repositories;
     app.current_location = Location::Catalog;
+    app.message = get_random_elem(&help_messages);
 
     loop {
         terminal.draw(|f| ui(f, &app))?;
@@ -94,9 +110,10 @@ pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Resu
                     }
                     KeyCode::Esc => match app.current_location {
                         Location::Catalog => {
-                            return Ok(());
+                            app.data = docker::get_catalog().repositories;
+                            app.focus_index = 0;
                         }
-                        Location::Image => {
+                        Location::Image(_) => {
                             app.current_location = Location::Catalog;
                             app.data = docker::get_catalog().repositories;
                             app.focus_index = 0;
@@ -104,7 +121,7 @@ pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Resu
                         _ => {}
                     },
                     KeyCode::Down | KeyCode::Char('j') => {
-                        if app.data.len() > app.focus_index {
+                        if app.data.len() - 1 > app.focus_index as usize {
                             app.focus_index += 1;
                         } else {
                             app.message = vec![Span::from("You reached bottom of the result")]
@@ -117,12 +134,14 @@ pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Resu
                             app.message = vec![Span::from("You reached top of the result")]
                         }
                     }
+                    KeyCode::Char('G') => {
+                        app.focus_index = app.data.len() as i32 - 1;
+                    }
                     KeyCode::Enter => match app.current_location {
                         Location::Catalog => {
-                            app.current_location = Location::Image;
-                            app.data = docker::get_image(
-                                app.data[app.focus_index].clone()
-                            ).tags;
+                            let target_image_name = app.data[app.focus_index as usize].clone();
+                            app.current_location = Location::Image(target_image_name.clone());
+                            app.data = docker::get_image(target_image_name).tags;
                             app.focus_index = 0;
                         }
                         _ => {}
@@ -137,15 +156,43 @@ pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Resu
                     KeyCode::Enter => {
                         app.message_title = MessageTitle::Tips;
                         app.mode = Mode::Normal;
+                        app.focus_index = 0;
+                        app.data = app
+                            .data
+                            .iter()
+                            .filter(|it| {
+                                let pattern = Regex::new(&app.input).unwrap();
+                                pattern.is_match(it)
+                            })
+                            .map(|it| it.to_string())
+                            .collect();
+                        app.message = get_random_elem(&help_messages);
                     }
                     KeyCode::Esc => {
                         app.message_title = MessageTitle::Tips;
                         app.mode = Mode::Normal;
+                        match app.current_location {
+                            Location::Catalog => app.data = docker::get_catalog().repositories,
+                            Location::Image(ref image_name) => {
+                                app.data = docker::get_image(image_name.to_string()).tags;
+                            }
+                            Location::Unknown => {}
+                        }
+                        app.input = String::new();
+                        app.message = get_random_elem(&help_messages);
                     }
                     KeyCode::Backspace => {
-                        app.input = app.input[1..(app.input.len() - 1)].to_string()
+                        if app.input.len() > 0 {
+                            app.input = app.input[0..(app.input.len() - 1)].to_string();
+                            app.message = vec![Span::raw(app.input.clone())];
+                        }
                     }
-                    _ => {}
+                    code => {
+                        if let KeyCode::Char(character) = code {
+                            app.input = app.input + &character.to_string();
+                            app.message = vec![Span::raw(app.input.clone())];
+                        }
+                    }
                 },
             }
         }
@@ -174,22 +221,24 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         },
     );
 
-    let paragraph = Paragraph::new(Text::from(Spans::from(match app.message_title {
-        MessageTitle::Tips => vec![
-            Span::raw("Press "),
-            Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" to exit."),
-        ],
-        _ => app.message.clone(),
-    })));
+    let message = match app.message_title {
+        MessageTitle::Tips => Paragraph::new(Text::from(Spans::from(app.message.clone()))),
+        MessageTitle::Search => {
+            Paragraph::new(Text::from(Spans::from(vec![Span::raw(app.input.clone())])))
+        }
+    };
     f.render_widget(
-        paragraph.block(
+        message.block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(app.message_title.to_string()),
         ),
         chunks[0],
     );
+
+    let start_idx = max(min(app.focus_index, app.data.len() as i32 - 20), 0 );
+    let end_idx = min(start_idx + 21, app.data.len() as i32 - 1);
+
     f.render_widget(
         List::new(
             app.data
@@ -197,14 +246,21 @@ pub fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 .iter()
                 .enumerate()
                 .map(|(idx, it)| {
-                    let style = if idx == app.focus_index {
+                    let style = if idx == app.focus_index as usize {
                         Style::default().bg(Color::White).fg(Color::Black)
                     } else {
                         Style::default()
                     };
                     ListItem::new(Spans::from(Span::styled(format!("{}", it), style)))
                 })
-                .collect::<Vec<ListItem>>(),
+                .enumerate()
+                .fold(vec![], |acc, (idx, it)| {
+                    if idx >= start_idx as usize && idx <= end_idx as usize {
+                        [acc, vec![it]].concat()
+                    } else {
+                        acc
+                    }
+                }),
         )
         .block(
             Block::default()

@@ -8,9 +8,23 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use log::LevelFilter;
+use log4rs::{append::file::FileAppender, encode::pattern::PatternEncoder, Config, config::{Appender, Root}};
 use tui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> Result<(), io::Error> {
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{d} - {m}{n}")))
+        .build("log/requests.log")
+        .unwrap();
+    let config = Config::builder()
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(Root::builder()
+            .appender("file")
+            .build(LevelFilter::Debug))
+        .unwrap();
+    let _handle = log4rs::init_config(config).unwrap();
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
