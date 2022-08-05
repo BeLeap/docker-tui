@@ -1,32 +1,25 @@
 mod app;
 mod docker;
 
-use std::{io, env, str::FromStr};
+use std::{io, fs::File, env, str::FromStr};
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use log::LevelFilter;
-use log4rs::{append::file::FileAppender, encode::pattern::PatternEncoder, Config, config::{Appender, Root}};
 use tui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> Result<(), io::Error> {
+    let now = chrono::Local::now();
     let log_level = env::var("LOG_LEVEL").unwrap_or("INFO".to_string());
-    let level_filter = LevelFilter::from_str(log_level.as_str()).unwrap();
-    let file = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d} - {m}{n}")))
-        .build("log/docker-tui.log")
-        .unwrap();
-    let config = Config::builder()
-        .appender(Appender::builder().build("file", Box::new(file)))
-        .build(Root::builder()
-            .appender("file")
-            .build(level_filter)
-        )
-        .unwrap();
-    let _handle = log4rs::init_config(config).unwrap();
+    let log_buffer = File::create(format!("log/{}.log", now.to_rfc3339()))?;
+
+    let _ = simplelog::WriteLogger::init(
+        log::LevelFilter::from_str(&log_level).unwrap(),
+        simplelog::Config::default(), 
+        log_buffer,
+    );
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
